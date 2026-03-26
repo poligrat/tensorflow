@@ -197,6 +197,9 @@ class IfrtServingExecutable {
     // The index `i` in these vectors corresponds to the i-th argument in the
     // executable.
     std::vector<std::shared_ptr<const xla::Shape>> xla_input_shapes;
+    // The input shapes that the executable was compiled with, with backend
+    // optimized layouts.
+    std::vector<std::shared_ptr<const xla::Shape>> xla_input_device_shapes;
     std::vector<absl::InlinedVector<int64_t, 4>> byte_strides;
     std::vector<std::shared_ptr<const xla::ifrt::Shape>> ifrt_input_shapes;
     std::vector<xla::ifrt::LayoutRef> xla_input_layouts;
