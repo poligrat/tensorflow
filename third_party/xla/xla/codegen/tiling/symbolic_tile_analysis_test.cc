@@ -444,15 +444,14 @@ region {
 
 fused_computation.1 {
   param_0.3 = f32[2048,8192] parameter(0)
-  constant = f32[] constant(-inf)
-  ROOT reduce = f32[8192] reduce(param_0.3, constant), dimensions={0}, to_apply=region
+  ROOT abs.2 = f32[2048,8192] abs(param_0.3)
 }
 
 ENTRY entry_computation {
   param_0.4 = f32[2048,8192] parameter(0)
   fusion = f32[2048,8192] fusion(param_0.4), kind=kCustom, calls=fused_computation
-  fusion.1 = f32[8192] fusion(fusion), kind=kCustom, calls=fused_computation.1
-  ROOT tuple = (f32[8192], f32[2048,8192]) tuple(fusion.1, fusion)
+  fusion.1 = f32[2048,8192] fusion(fusion), kind=kCustom, calls=fused_computation.1
+  ROOT tuple = (f32[2048,8192], f32[2048,8192]) tuple(fusion.1, fusion)
 })"));
 
   const auto* consumer =
@@ -2072,6 +2071,38 @@ ENTRY main {
   main.p0 = f32[] parameter(0)
   ROOT main.root = f32[] fusion(main.p0), kind=kLoop, calls=fusion
 })"));
+  EXPECT_FALSE(TryAnalyzeModule(module.get()).has_value());
+}
+
+TEST_F(SymbolicTileAnalysisTest, BailsOutOnReductionInNestedFusion) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add_computation {
+  param_0 = f32[] parameter(0)
+  param_1 = f32[] parameter(1)
+  ROOT add = f32[] add(param_0, param_1)
+}
+
+nested_fusion {
+  param = f32[10, 10] parameter(0)
+  ROOT abs = f32[10, 10] abs(param)
+}
+
+fused_computation {
+  p0 = f32[10, 10] parameter(0)
+  nested = f32[10, 10] fusion(p0), kind=kLoop, calls=nested_fusion
+  constant = f32[] constant(0)
+  ROOT reduce = f32[10] reduce(nested, constant), dimensions={1}, to_apply=add_computation
+}
+
+ENTRY main {
+  p0 = f32[10, 10] parameter(0)
+  ROOT fusion = f32[10] fusion(p0), kind=kLoop, calls=fused_computation
+})"));
+  // This should fail because the nested fusion is an operand of a reduction,
+  // and we don't support range variables in nested fusions.
   EXPECT_FALSE(TryAnalyzeModule(module.get()).has_value());
 }
 

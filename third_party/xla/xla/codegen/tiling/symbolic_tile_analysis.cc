@@ -164,9 +164,14 @@ absl::StatusOr<OutputTilingInfo> ComputeOutputTilingInfo(
     const std::optional<absl::Span<const Interval>>&
         parent_output_tile_dim_bounds = std::nullopt) {
   int64_t num_tiling_parameters = root_indexing.GetDimVarsCount();
-  CHECK_EQ(num_tiling_parameters, tile_sizes.size());  // Crash OK
-  CHECK_EQ(0, root_indexing.GetRangeVarsCount())
-      << "Range variables must be converted to dimensions";
+  CHECK_EQ(num_tiling_parameters,
+           tile_sizes.size());  // Crash OK
+  // TODO(b/419026602): This will be crash OK after
+  // InsertTilingParameterForContractingDimensions supports kReduce.
+  if (root_indexing.GetRangeVarsCount() > 0) {
+    return absl::UnimplementedError(
+        "Range variables must be converted to dimensions");
+  }
 
   const IndexingMap::Variable ignore_variable{0, 0, "ignore"};
   llvm::SmallVector<int64_t> outer_loop_bounds(num_tiling_parameters, 1);
@@ -1279,11 +1284,34 @@ SymbolicTileAnalysis::AnalyzeFromInstruction(
     IndexingMap::SimplifyPointDimensions simplification_mode,
     EmitterSpecificConstraintsBuilder emitter_specific_constraints_builder,
     ConstraintExpression& constraints) {
+  // TODO(b/419026602): Rejecting fusions and regions where the root indexing
+  // contains unconverted range variables until
+  // InsertTilingParameterForContractingDimensions supports kReduce.
+  if (instruction->indexing_map().GetRangeVarsCount() > 0) {
+    return FusionDecision::Forbid(
+        "Range variables must be converted to dimensions");
+  }
+
+  absl::flat_hash_set<const HloInstruction*> roots;
+  for (const auto& adaptor : fusion.GetRoots()) {
+    roots.insert(&adaptor.instruction());
+  }
+
   UnsafeSymbolicTiledHloInstructionOrderedSet tiled_hlo_instructions_set;
   std::vector<SymbolicTiledHloInstruction*> worklist = {instruction.get()};
   while (!worklist.empty()) {
     SymbolicTiledHloInstruction* tiled_hlo_instruction = worklist.back();
     worklist.pop_back();
+    const HloInstruction* hlo = tiled_hlo_instruction->hlo();
+    const IndexingMap& indexing_map = tiled_hlo_instruction->indexing_map();
+    // TODO(b/419026602): Rejecting fusions and regions where the root
+    // indexing contains unconverted range variables until
+    // InsertTilingParameterForContractingDimensions supports kReduce.
+    if (roots.contains(hlo) && indexing_map.GetRangeVarsCount() > 0) {
+      return FusionDecision::Forbid(
+          "Range variables must be converted to dimensions");
+    }
+
     if (FusionDecision set_decision =
             SetSymbolicTile(tiled_hlo_instruction, fusion);
         !set_decision) {
@@ -1292,7 +1320,6 @@ SymbolicTileAnalysis::AnalyzeFromInstruction(
     constraints =
         constraints && tiled_hlo_instruction->symbolic_tile().constraints();
     constraints.Simplify();
-    const HloInstruction* hlo = tiled_hlo_instruction->hlo();
     if (!constraints.is_satisfiable()) {
       return FusionDecision::Forbid(absl::StrCat(
           "Tiling constraints are unsatisfiable at HLO ", hlo->ToString()));
