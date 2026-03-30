@@ -31,6 +31,7 @@ limitations under the License.
 
 #include "absl/synchronization/barrier.h"
 #include "absl/synchronization/notification.h"
+#include "absl/time/time.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/blocking_counter.h"
@@ -209,6 +210,46 @@ TEST(RunHandlerUtilTest, IntraOpThreadPool) {
   absl::Notification notification;
   intra_pool->Schedule([&notification]() { notification.Notify(); });
   notification.WaitForNotification();
+}
+
+// Verifies that ScheduleIntraOpClosure enqueues work to the non-blocking
+// (intra-op) queue.
+//
+// Strategy: create a pool with 1 blocking (inter-op) thread and 1 non-blocking
+// (intra-op) thread. Saturate the blocking thread with an inter-op task, then
+// schedule an intra-op closure. If the closure is correctly routed to the
+// non-blocking queue, the intra-op thread will pick it up. If it were
+// incorrectly routed to the blocking queue, only the busy inter-op thread
+// could run it, and the test would time out.
+TEST(RunHandlerUtilTest, ScheduleIntraOpClosureRoutesToNonBlockingQueue) {
+  RunHandlerPool::Options options;
+  options.num_inter_op_threads = 1;  // 1 blocking thread
+  options.num_intra_op_threads = 1;  // 1 non-blocking thread
+  options.num_threads_in_sub_thread_pool = {2};
+  std::unique_ptr<RunHandlerPool> pool(new RunHandlerPool(options));
+
+  auto handler = pool->Get(/*step_id=*/1, /*timeout_in_ms=*/0);
+
+  // Block the sole inter-op (blocking) thread.
+  absl::Notification blocker_started;
+  absl::Notification blocker_release;
+  handler->ScheduleInterOpClosure(TaskFunction([&]() {
+    blocker_started.Notify();
+    blocker_release.WaitForNotification();
+  }));
+  blocker_started.WaitForNotification();
+
+  // Schedule an intra-op closure. With the correct implementation this goes
+  // to the non-blocking queue and the intra-op thread picks it up.
+  absl::Notification intra_done;
+  handler->ScheduleIntraOpClosure(TaskFunction([&]() { intra_done.Notify(); }));
+
+  // If ScheduleIntraOpClosure incorrectly enqueued as blocking work, the
+  // intra-op thread cannot pick it up and this would hang.
+  EXPECT_TRUE(intra_done.WaitForNotificationWithTimeout(absl::Seconds(10)));
+
+  // Unblock the inter-op thread so the pool can shut down cleanly.
+  blocker_release.Notify();
 }
 
 class RunHandlerThreadPoolTest
