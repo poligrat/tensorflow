@@ -434,9 +434,9 @@ TEST_P(AllReduceKernelTest, KernelTestAddPred_Unsupported) {
 
   auto results = RunKernel<bool>(executors, inputs, ReductionKind::SUM);
   EXPECT_THAT(results.status(),
-              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
   EXPECT_THAT(results.status().message(),
-              ::testing::HasSubstr("AllReduce kernel is not supported"));
+              ::testing::HasSubstr("combination is not supported"));
 }
 
 INSTANTIATE_TEST_SUITE_P(
