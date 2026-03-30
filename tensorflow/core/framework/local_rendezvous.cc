@@ -142,8 +142,8 @@ LocalRendezvous::~LocalRendezvous() {
 }
 
 namespace {
-uint64_t KeyHash(const absl::string_view& k) {
-  return Hash64(k.data(), k.size());
+uint64_t KeyHash(absl::string_view k) {
+  return absl::HashOf(k.data(), k.size());
 }
 }  // namespace
 
