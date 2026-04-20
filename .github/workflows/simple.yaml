@@ -128,8 +128,8 @@ jobs:
 
           # Parse profile timeout (minutes), default 45 min, max 360 min (6 hours)
           PROFILE_TIMEOUT_MINUTES=$(echo "$CONFIG" | jq -r '.profile_timeout_minutes // "45"')
-          # Clamp to valid range
-          if [ "$PROFILE_TIMEOUT_MINUTES" -lt 45 ] 2>/dev/null; then PROFILE_TIMEOUT_MINUTES=45; fi
+          # Clamp to valid range (5-360 minutes)
+          if [ "$PROFILE_TIMEOUT_MINUTES" -lt 5 ] 2>/dev/null; then PROFILE_TIMEOUT_MINUTES=5; fi
           if [ "$PROFILE_TIMEOUT_MINUTES" -gt 360 ] 2>/dev/null; then PROFILE_TIMEOUT_MINUTES=360; fi
           PROFILE_TIMEOUT_SECONDS=$((PROFILE_TIMEOUT_MINUTES * 60))
           echo "profile_timeout_minutes=$PROFILE_TIMEOUT_MINUTES" >> $GITHUB_OUTPUT
